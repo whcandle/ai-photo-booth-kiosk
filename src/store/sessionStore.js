@@ -4,8 +4,10 @@ import { getSession } from "../api/boothApi";
 export const sessionId = ref(localStorage.getItem("sessionId") || "");
 export const session = ref(null);
 export const lastError = ref("");
+export const offline = ref(false);
 
 let pollTimer = null;
+let failCount = 0;
 
 export function setSessionId(id) {
   sessionId.value = id || "";
@@ -17,6 +19,8 @@ export function clearSession() {
   setSessionId("");
   session.value = null;
   lastError.value = "";
+  offline.value = false;
+  failCount = 0;
 }
 
 export function startPolling(intervalMs = 800) {
@@ -28,14 +32,22 @@ export function startPolling(intervalMs = 800) {
       const s = await getSession(sessionId.value);
       session.value = s;
       lastError.value = "";
+      offline.value = false;
+      failCount = 0;
+
       // 如果后端把 session 回收成 IDLE，也清掉本地 sessionId，回欢迎页
       if (s.state === "IDLE") {
         clearSession();
       }
     } catch (e) {
-      // 404 或网络错误：清掉，回欢迎页
+      failCount += 1;
+      offline.value = true;
       lastError.value = e?.response?.data?.error?.message || e.message || "poll error";
-      clearSession();
+
+      // Day7: 给用户一个"断网缓冲期"：失败 5 次（约 4 秒）才回首页
+      if (failCount >= 5) {
+        clearSession();
+      }
     }
   }, intervalMs);
 }

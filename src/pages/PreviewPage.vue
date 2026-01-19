@@ -3,7 +3,9 @@
     <h2>预览</h2>
 
     <div class="imgWrap" v-if="session.previewUrl">
-      <img :src="backend + session.previewUrl" />
+      <!-- <img :src="session.previewUrl" /> -->
+
+      <img :src="imgSrc" />
     </div>
     <p v-else class="sub">预览图未生成（不应出现，后端会兜底回收）</p>
 
@@ -21,13 +23,26 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
 import { retry, confirm } from "../api/boothApi";
+
+import { ref, computed } from "vue";
+
+// const backend = "http://localhost:8080";
+
+const imgSrc = computed(() => {
+  const u = props.session?.previewUrl || "";
+  if (!u) return "";
+  // 已经是 http/https 绝对地址，直接用
+  if (/^https?:\/\//i.test(u)) return u;
+  // 否则按后端地址拼接
+  return backend.replace(/\/$/, "") + "/" + u.replace(/^\//, "");
+});
+
+
 
 const props = defineProps({ session: Object });
 const emit = defineEmits(["retry", "confirm"]);
 
-const backend = "http://localhost:8080";
 const loading = ref(false);
 const err = ref("");
 
