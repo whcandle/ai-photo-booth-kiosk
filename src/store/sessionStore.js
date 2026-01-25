@@ -35,6 +35,11 @@ export function startPolling(intervalMs = 800) {
       offline.value = false;
       failCount = 0;
 
+      // 调试：打印状态变化
+      if (s.state) {
+        console.log("[SessionStore] Polled session state:", s.state, "cameraPreviewUrl:", s.cameraPreviewUrl);
+      }
+
       // 如果后端把 session 回收成 IDLE，也清掉本地 sessionId，回欢迎页
       if (s.state === "IDLE") {
         clearSession();

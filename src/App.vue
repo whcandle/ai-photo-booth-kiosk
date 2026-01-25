@@ -5,6 +5,7 @@
       <div class="status" v-if="session">
         <span>Session: {{ session.sessionId }}</span>
         <span>State: {{ session.state }}</span>
+        <span v-if="session.cameraPreviewUrl">Preview: {{ session.cameraPreviewUrl }}</span>
       </div>
     </div>
 
@@ -17,6 +18,11 @@
       v-else-if="session.state === 'SELECTING'"
       :session="session"
       @selected="onSelected"
+    />
+
+    <LivePreviewPage
+      v-else-if="session.state === 'LIVE_PREVIEW'"
+      :session="session"
     />
 
     <CountdownPage
@@ -43,8 +49,13 @@
     />
 
     <div v-else class="card">
-      <h2>Unknown State</h2>
-      <pre>{{ session }}</pre>
+      <h2>Unknown State: {{ session?.state }}</h2>
+      <p>Debug: session.state = "{{ session?.state }}" (type: {{ typeof session?.state }})</p>
+      <p>Expected: LIVE_PREVIEW</p>
+      <details>
+        <summary>Full Session Object</summary>
+        <pre>{{ JSON.stringify(session, null, 2) }}</pre>
+      </details>
       <button @click="forceReset">Back to Home</button>
     </div>
   </div>
@@ -54,6 +65,7 @@
 import { onMounted, onBeforeUnmount, computed } from "vue";
 import IdlePage from "./pages/IdlePage.vue";
 import SelectingPage from "./pages/SelectingPage.vue";
+import LivePreviewPage from "./pages/LivePreviewPage.vue";
 import CountdownPage from "./pages/CountdownPage.vue";
 import ProcessingPage from "./pages/ProcessingPage.vue";
 import PreviewPage from "./pages/PreviewPage.vue";

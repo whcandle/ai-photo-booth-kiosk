@@ -89,3 +89,15 @@ export async function finish(sessionId) {
   );
   return res.data;
 }
+
+/**
+ * Phase 4: 从 LIVE_PREVIEW 进入 COUNTDOWN（用户点击"开始拍照"）
+ */
+export async function countdown(sessionId) {
+  const res = await api.post(
+    `/api/v1/sessions/${sessionId}/countdown`,
+    null,
+    { headers: { "Idempotency-Key": idem("countdown") } }
+  );
+  return res.data;
+}
