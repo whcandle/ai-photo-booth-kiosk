@@ -48,6 +48,12 @@
       :session="session"
     />
 
+    <ErrorPage
+      v-else-if="session.state === 'ERROR'"
+      :session="session"
+      @reset="forceReset"
+    />
+
     <div v-else class="card">
       <h2>Unknown State: {{ session?.state }}</h2>
       <p>Debug: session.state = "{{ session?.state }}" (type: {{ typeof session?.state }})</p>
@@ -70,6 +76,7 @@ import CountdownPage from "./pages/CountdownPage.vue";
 import ProcessingPage from "./pages/ProcessingPage.vue";
 import PreviewPage from "./pages/PreviewPage.vue";
 import DeliveringPage from "./pages/DeliveringPage.vue";
+import ErrorPage from "./pages/ErrorPage.vue";
 
 import { session, startPolling, stopPolling, clearSession } from "./store/sessionStore";
 import { finish } from "./api/boothApi";

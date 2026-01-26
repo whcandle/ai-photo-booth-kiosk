@@ -101,3 +101,33 @@ export async function countdown(sessionId) {
   );
   return res.data;
 }
+
+/**
+ * 相机策略配置 API
+ */
+export async function listCameraProfiles() {
+  const res = await api.get("/api/v1/camera/profiles");
+  return res.data;
+}
+
+export async function getCameraProfile(id) {
+  const res = await api.get(`/api/v1/camera/profiles/${id}`);
+  return res.data;
+}
+
+export async function applyCameraProfile(id, persist = true) {
+  const res = await api.post(`/api/v1/camera/profiles/${id}/apply?persist=${persist}`);
+  return res.data;
+}
+
+/**
+ * 直接设置相机属性（供前端手动调参使用）
+ */
+export async function setCameraProperty(key, value, persist = false) {
+  const res = await api.post(
+    "/api/v1/camera/properties/set",
+    { key, value, persist },
+    { headers: { "Idempotency-Key": idem("property") } }
+  );
+  return res.data;
+}
