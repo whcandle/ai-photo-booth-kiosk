@@ -131,3 +131,15 @@ export async function setCameraProperty(key, value, persist = false) {
   );
   return res.data;
 }
+
+/**
+ * 重启预览（用于预览卡住时的自愈恢复）
+ */
+export async function restartPreview() {
+  const res = await api.post(
+    "/api/v1/camera/preview/restart",
+    null,
+    { headers: { "Idempotency-Key": idem("preview_restart") } }
+  );
+  return res.data;
+}
