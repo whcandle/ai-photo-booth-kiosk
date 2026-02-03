@@ -366,9 +366,100 @@
         </div>
       </div>
       
-      <div v-if="activeTab === 'device'" class="tab-content">
-        <h2>设备与平台</h2>
-        <p>设备配置功能开发中...</p>
+      <div v-if="activeTab === 'device'" class="tab-content device-tab">
+        <div class="device-header">
+          <h2>设备与平台</h2>
+          <button 
+            @click="loadDeviceData" 
+            :disabled="deviceLoading"
+            class="btn-refresh"
+          >
+            {{ deviceLoading ? '加载中...' : '刷新' }}
+          </button>
+        </div>
+
+        <!-- 加载状态 -->
+        <div v-if="deviceLoading && !deviceConfig" class="loading-state">
+          <p>正在加载设备配置...</p>
+        </div>
+
+        <!-- 错误状态 -->
+        <div v-if="deviceError && !deviceLoading" class="error-state">
+          <p class="error-message">{{ deviceError }}</p>
+        </div>
+
+        <!-- 设备配置表单 -->
+        <div v-if="deviceConfig" class="device-config-section">
+          <h3>平台配置</h3>
+          <form @submit.prevent="handleSaveDeviceConfig" class="device-form">
+            <div class="form-grid">
+              <!-- Platform Base URL -->
+              <div class="form-item">
+                <label class="form-label">平台地址 (Platform Base URL):</label>
+                <input 
+                  type="text" 
+                  v-model="editDeviceConfig.platformBaseUrl"
+                  placeholder="http://127.0.0.1:8089"
+                  class="form-input"
+                />
+                <span class="form-hint">平台 API 的基础地址</span>
+              </div>
+
+              <!-- Device Code -->
+              <div class="form-item">
+                <label class="form-label">设备代码 (Device Code):</label>
+                <input 
+                  type="text" 
+                  v-model="editDeviceConfig.deviceCode"
+                  placeholder="device-001"
+                  class="form-input"
+                />
+                <span class="form-hint">设备标识代码</span>
+              </div>
+
+              <!-- Secret -->
+              <div class="form-item">
+                <label class="form-label">密钥 (Secret):</label>
+                <input 
+                  type="password" 
+                  v-model="editDeviceConfig.secret"
+                  placeholder="your-secret-key"
+                  class="form-input"
+                />
+                <span class="form-hint">设备认证密钥</span>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button 
+                type="submit"
+                :disabled="savingDeviceConfig"
+                class="btn-save-device"
+              >
+                {{ savingDeviceConfig ? '保存中...' : '保存配置' }}
+              </button>
+            </div>
+          </form>
+
+          <!-- 只读信息 -->
+          <div class="device-readonly-section">
+            <h3>设备信息（只读）</h3>
+            <div class="readonly-grid">
+              <div class="readonly-item">
+                <span class="readonly-label">设备 ID:</span>
+                <span class="readonly-value">{{ deviceConfig.deviceId || '—' }}</span>
+              </div>
+              <div class="readonly-item">
+                <span class="readonly-label">设备 Token:</span>
+                <span class="readonly-value">{{ deviceConfig.deviceToken ? '***' + deviceConfig.deviceToken.slice(-8) : '—' }}</span>
+              </div>
+              <div class="readonly-item">
+                <span class="readonly-label">Token 过期时间:</span>
+                <span class="readonly-value">{{ formatTokenExpiresAt(deviceConfig.tokenExpiresAt) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       
       <div v-if="activeTab === 'cache'" class="tab-content">
@@ -396,6 +487,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCameraConfig, getCameraStatus, applyPreset, applyParams, testShot } from '../api/cameraApi'
+import { getDeviceConfig, saveDeviceConfig } from '../api/deviceApi'
 import Toast from '../components/Toast.vue'
 
 const router = useRouter()
@@ -444,6 +536,17 @@ const lastPreviewTime = ref(null)
 const previewLoadCount = ref(0)
 const previewFpsStartTime = ref(null)
 const previewFpsCount = ref(0)
+
+// 设备配置数据
+const deviceConfig = ref(null)
+const deviceLoading = ref(false)
+const deviceError = ref(null)
+const savingDeviceConfig = ref(false)
+const editDeviceConfig = ref({
+  platformBaseUrl: '',
+  deviceCode: '',
+  secret: ''
+})
 
 // 计算激活预设的显示名称
 const activePresetDisplayName = computed(() => {
@@ -835,10 +938,79 @@ const formatPreviewTime = (timestamp) => {
   return new Date(timestamp).toLocaleTimeString()
 }
 
-// 监听 activeTab，切换到 camera 时自动加载
+// 设备配置相关函数
+const loadDeviceData = async () => {
+  deviceLoading.value = true
+  deviceError.value = null
+  
+  try {
+    const res = await getDeviceConfig()
+    
+    if (res.success && res.data) {
+      deviceConfig.value = res.data
+      // 初始化编辑表单
+      editDeviceConfig.value = {
+        platformBaseUrl: res.data.platformBaseUrl || '',
+        deviceCode: res.data.deviceCode || '',
+        secret: res.data.secret || ''
+      }
+    } else {
+      deviceError.value = res.message || 'Failed to load device config'
+    }
+  } catch (err) {
+    const errorMsg = err?.response?.data?.message || 
+                     err?.message || 
+                     '无法连接到设备服务，请检查 MVP 服务是否运行在 http://localhost:8080'
+    deviceError.value = errorMsg
+    showToast(errorMsg, 'error')
+    console.error('加载设备配置失败:', err)
+  } finally {
+    deviceLoading.value = false
+  }
+}
+
+const handleSaveDeviceConfig = async () => {
+  savingDeviceConfig.value = true
+  
+  try {
+    const res = await saveDeviceConfig(editDeviceConfig.value)
+    
+    if (res.success) {
+      showToast('设备配置保存成功', 'success')
+      // 刷新配置
+      await loadDeviceData()
+    } else {
+      const errorMsg = res.message || '保存设备配置失败'
+      showToast(errorMsg, 'error')
+    }
+  } catch (err) {
+    const errorMsg = err?.response?.data?.message || 
+                     err?.message || 
+                     '保存设备配置失败'
+    showToast(errorMsg, 'error')
+    console.error('保存设备配置失败:', err)
+  } finally {
+    savingDeviceConfig.value = false
+  }
+}
+
+const formatTokenExpiresAt = (expiresAt) => {
+  if (!expiresAt) return '—'
+  try {
+    const date = new Date(expiresAt)
+    if (isNaN(date.getTime())) return expiresAt // Return raw string if invalid
+    return date.toLocaleString('zh-CN')
+  } catch (e) {
+    return expiresAt
+  }
+}
+
+// 监听 activeTab，切换到对应 tab 时自动加载
 watch(activeTab, (newTab) => {
   if (newTab === 'camera' && !cameraConfig.value) {
     loadCameraData()
+  } else if (newTab === 'device' && !deviceConfig.value) {
+    loadDeviceData()
   }
 })
 
@@ -871,6 +1043,8 @@ onMounted(() => {
   // 如果当前是 camera tab，加载数据
   if (activeTab.value === 'camera') {
     loadCameraData()
+  } else if (activeTab.value === 'device') {
+    loadDeviceData()
   }
 })
 
@@ -1596,5 +1770,153 @@ const handleExit = () => {
 .preview-status-item strong {
   color: rgba(255, 255, 255, 0.9);
   font-weight: 600;
+}
+
+/* Device Tab 样式 */
+.device-tab {
+  min-height: 400px;
+}
+
+.device-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.device-header h2 {
+  margin: 0;
+}
+
+.device-config-section {
+  margin-bottom: 32px;
+}
+
+.device-config-section h3 {
+  margin: 0 0 20px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.device-form {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 32px;
+}
+
+.device-form .form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.device-form .form-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.device-form .form-label {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.device-form .form-input {
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.device-form .form-input:focus {
+  outline: none;
+  border-color: #2d6cff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.device-form .form-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.device-form .form-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 4px;
+}
+
+.device-form .form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-save-device {
+  padding: 10px 20px;
+  background: #2d6cff;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-save-device:hover:not(:disabled) {
+  background: #1e5ae6;
+}
+
+.btn-save-device:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.device-readonly-section {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.device-readonly-section h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.readonly-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.readonly-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+}
+
+.readonly-label {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+}
+
+.readonly-value {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: monospace;
+  word-break: break-all;
 }
 </style>
