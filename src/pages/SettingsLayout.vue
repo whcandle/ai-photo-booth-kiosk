@@ -459,6 +459,54 @@
               </div>
             </div>
           </div>
+
+          <!-- 平台操作 -->
+          <div class="device-platform-actions">
+            <h3>平台操作</h3>
+            <div class="platform-actions-grid">
+              <button 
+                @click="handleHandshake"
+                :disabled="handshaking"
+                class="btn-handshake"
+              >
+                {{ handshaking ? 'Handshaking...' : 'Handshake' }}
+              </button>
+              <button 
+                @click="handleFetchActivities"
+                :disabled="fetchingActivities"
+                class="btn-fetch-activities"
+              >
+                {{ fetchingActivities ? 'Fetching...' : 'Fetch Activities' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Activities 列表 -->
+          <div v-if="activitiesList !== null" class="device-activities-section">
+            <h3>Activities List</h3>
+            <!-- 缓存标记 -->
+            <div v-if="activitiesStale" class="cache-indicator">
+              <span class="cache-badge">Using cached data</span>
+              <span v-if="activitiesCachedAt" class="cache-time">
+                cachedAt: {{ formatCachedAt(activitiesCachedAt) }}
+              </span>
+            </div>
+            <!-- Activities 列表 -->
+            <div class="activities-list">
+              <div v-if="activitiesList.length === 0" class="activities-empty">
+                <p>No activities found</p>
+              </div>
+              <div v-else class="activities-items">
+                <div 
+                  v-for="(activity, index) in activitiesList" 
+                  :key="index"
+                  class="activity-item"
+                >
+                  <pre class="activity-json">{{ JSON.stringify(activity, null, 2) }}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       
@@ -487,7 +535,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCameraConfig, getCameraStatus, applyPreset, applyParams, testShot } from '../api/cameraApi'
-import { getDeviceConfig, saveDeviceConfig } from '../api/deviceApi'
+import { getDeviceConfig, saveDeviceConfig, handshake, getActivities } from '../api/deviceApi'
 import Toast from '../components/Toast.vue'
 
 const router = useRouter()
@@ -547,6 +595,13 @@ const editDeviceConfig = ref({
   deviceCode: '',
   secret: ''
 })
+
+// 平台操作状态
+const handshaking = ref(false)
+const fetchingActivities = ref(false)
+const activitiesList = ref(null)
+const activitiesStale = ref(false)
+const activitiesCachedAt = ref(null)
 
 // 计算激活预设的显示名称
 const activePresetDisplayName = computed(() => {
@@ -1002,6 +1057,89 @@ const formatTokenExpiresAt = (expiresAt) => {
     return date.toLocaleString('zh-CN')
   } catch (e) {
     return expiresAt
+  }
+}
+
+// Handshake 操作
+const handleHandshake = async () => {
+  handshaking.value = true
+  
+  try {
+    const res = await handshake()
+    
+    if (res.success) {
+      showToast('Handshake successful', 'success')
+      // Reload config to get updated deviceId/token
+      await loadDeviceData()
+    } else {
+      const errorMsg = res.message || 'Handshake failed'
+      showToast(errorMsg, 'error')
+    }
+  } catch (err) {
+    const errorMsg = err?.response?.data?.message || 
+                     err?.message || 
+                     'Handshake failed'
+    showToast(errorMsg, 'error')
+    console.error('Handshake failed:', err)
+  } finally {
+    handshaking.value = false
+  }
+}
+
+// Fetch Activities 操作
+const handleFetchActivities = async () => {
+  fetchingActivities.value = true
+  activitiesList.value = null
+  activitiesStale.value = false
+  activitiesCachedAt.value = null
+  
+  try {
+    const res = await getActivities()
+    
+    if (res.success && res.data) {
+      activitiesList.value = res.data.items || []
+      activitiesStale.value = res.data.stale === true
+      activitiesCachedAt.value = res.data.cachedAt || null
+      
+      if (activitiesStale.value) {
+        showToast('Using cached data', 'info')
+      } else {
+        showToast('Activities fetched successfully', 'success')
+      }
+    } else {
+      const errorMsg = res.message || 'Failed to fetch activities'
+      showToast(errorMsg, 'error')
+    }
+  } catch (err) {
+    // Handle HTTP status codes
+    const statusCode = err?.response?.status
+    const errorData = err?.response?.data
+    
+    if (statusCode === 401) {
+      showToast('Token invalid/expired, please handshake', 'error')
+    } else if (statusCode === 503) {
+      showToast('Platform unreachable', 'error')
+    } else {
+      const errorMsg = errorData?.message || 
+                       err?.message || 
+                       'Failed to fetch activities'
+      showToast(errorMsg, 'error')
+    }
+    console.error('Fetch activities failed:', err)
+  } finally {
+    fetchingActivities.value = false
+  }
+}
+
+// Format cachedAt timestamp
+const formatCachedAt = (cachedAt) => {
+  if (!cachedAt) return ''
+  try {
+    const date = new Date(cachedAt)
+    if (isNaN(date.getTime())) return cachedAt // Return raw string if invalid
+    return date.toLocaleString('en-US')
+  } catch (e) {
+    return cachedAt
   }
 }
 
@@ -1918,5 +2056,138 @@ const handleExit = () => {
   font-weight: 500;
   font-family: monospace;
   word-break: break-all;
+}
+
+/* 平台操作区域 */
+.device-platform-actions {
+  margin-top: 32px;
+  padding-top: 32px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.device-platform-actions h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.platform-actions-grid {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn-handshake,
+.btn-fetch-activities {
+  padding: 10px 20px;
+  border: 0;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-handshake {
+  background: #2d6cff;
+  color: #fff;
+}
+
+.btn-handshake:hover:not(:disabled) {
+  background: #1e5ae6;
+}
+
+.btn-fetch-activities {
+  background: #44aa44;
+  color: #fff;
+}
+
+.btn-fetch-activities:hover:not(:disabled) {
+  background: #339933;
+}
+
+.btn-handshake:disabled,
+.btn-fetch-activities:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Activities 列表区域 */
+.device-activities-section {
+  margin-top: 32px;
+  padding-top: 32px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.device-activities-section h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.cache-indicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(255, 170, 0, 0.1);
+  border: 1px solid rgba(255, 170, 0, 0.3);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.cache-badge {
+  padding: 4px 12px;
+  background: rgba(255, 170, 0, 0.2);
+  color: #ffaa00;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.cache-time {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  font-family: monospace;
+}
+
+.activities-list {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.activities-empty {
+  padding: 24px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+}
+
+.activities-items {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.activity-item {
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+.activity-json {
+  margin: 0;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-family: 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
 }
 </style>
