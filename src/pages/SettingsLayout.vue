@@ -478,6 +478,13 @@
               >
                 {{ fetchingActivities ? 'Fetching...' : 'Fetch Activities' }}
               </button>
+              <button 
+                @click="handleFetchTemplates"
+                :disabled="fetchingTemplates || !selectedActivityId"
+                class="btn-fetch-templates"
+              >
+                {{ fetchingTemplates ? 'Fetching...' : 'Fetch Templates' }}
+              </button>
             </div>
           </div>
 
@@ -500,9 +507,84 @@
                 <div 
                   v-for="(activity, index) in activitiesList" 
                   :key="index"
-                  class="activity-item"
+                  :class="['activity-item', { 'activity-item-selected': selectedActivityId === activity.activityId }]"
+                  @click="selectedActivityId = activity.activityId"
                 >
                   <pre class="activity-json">{{ JSON.stringify(activity, null, 2) }}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Templates 列表 -->
+          <div v-if="templatesList !== null" class="device-templates-section">
+            <h3>Templates List</h3>
+            <!-- 缓存标记 -->
+            <div v-if="templatesStale" class="cache-indicator">
+              <span class="cache-badge">缓存数据</span>
+              <span v-if="templatesCachedAt" class="cache-time">
+                cachedAt: {{ formatCachedAt(templatesCachedAt) }}
+              </span>
+            </div>
+            <!-- Templates 列表 -->
+            <div class="templates-list">
+              <div v-if="templatesList.length === 0" class="templates-empty">
+                <p>No templates found</p>
+              </div>
+              <div v-else class="templates-items">
+                <div 
+                  v-for="(template, index) in templatesList" 
+                  :key="index"
+                  class="template-item"
+                >
+                  <div class="template-field">
+                    <span class="template-label">templateCode:</span>
+                    <span class="template-value">{{ getTemplateCode(template) }}</span>
+                  </div>
+                  <div class="template-field">
+                    <span class="template-label">name:</span>
+                    <span class="template-value">{{ template.name }}</span>
+                  </div>
+                  <div class="template-field">
+                    <span class="template-label">versionSemver:</span>
+                    <span class="template-value">{{ getVersionSemver(template) }}</span>
+                  </div>
+                  <div class="template-field">
+                    <span class="template-label">downloadUrl:</span>
+                    <span class="template-value">{{ template.downloadUrl || 'N/A' }}</span>
+                  </div>
+                  <div class="template-field">
+                    <span class="template-label">checksumSha256:</span>
+                    <span class="template-value">{{ getChecksumSha256(template) || 'N/A' }}</span>
+                  </div>
+                  <div class="template-field">
+                    <span class="template-label">enabled:</span>
+                    <span class="template-value">{{ template.enabled }}</span>
+                  </div>
+                  <div v-if="getUpdatedAt(template)" class="template-field">
+                    <span class="template-label">updatedAt:</span>
+                    <span class="template-value">{{ getUpdatedAt(template) }}</span>
+                  </div>
+                  <!-- 安装按钮和状态 -->
+                  <div class="template-install-section">
+                    <div v-if="installedMap[getTemplateCode(template)]" class="template-install-status installed">
+                      <span class="status-text">已安装</span>
+                    </div>
+                    <div v-else-if="installingMap[getTemplateCode(template)]" class="template-install-status installing">
+                      <span class="status-text">安装中...</span>
+                    </div>
+                    <button
+                      v-else
+                      @click="handleInstall(template)"
+                      :disabled="installingMap[getTemplateCode(template)]"
+                      class="btn-install-template"
+                    >
+                      Install
+                    </button>
+                    <div v-if="installErrorMap[getTemplateCode(template)]" class="template-install-error">
+                      {{ installErrorMap[getTemplateCode(template)] }}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -535,7 +617,8 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCameraConfig, getCameraStatus, applyPreset, applyParams, testShot } from '../api/cameraApi'
-import { getDeviceConfig, saveDeviceConfig, handshake, getActivities } from '../api/deviceApi'
+import { getDeviceConfig, saveDeviceConfig, handshake, getActivities, getActivityTemplates } from '../api/deviceApi'
+import { installTemplate, listInstalledTemplates } from '../api/boothApi'
 import Toast from '../components/Toast.vue'
 
 const router = useRouter()
@@ -602,6 +685,17 @@ const fetchingActivities = ref(false)
 const activitiesList = ref(null)
 const activitiesStale = ref(false)
 const activitiesCachedAt = ref(null)
+const selectedActivityId = ref(null)
+
+const fetchingTemplates = ref(false)
+const templatesList = ref(null)
+const templatesStale = ref(false)
+const templatesCachedAt = ref(null)
+
+// 模板安装相关状态
+const installedMap = ref({})
+const installingMap = ref({})
+const installErrorMap = ref({})
 
 // 计算激活预设的显示名称
 const activePresetDisplayName = computed(() => {
@@ -1143,6 +1237,119 @@ const formatCachedAt = (cachedAt) => {
   }
 }
 
+// Template field helpers (compatible with old fields)
+const getTemplateCode = (template) => {
+  // Prefer templateCode, fallback to templateId
+  return template.templateCode || template.templateId || 'N/A'
+}
+
+const getVersionSemver = (template) => {
+  // Prefer versionSemver, fallback to version
+  return template.versionSemver || template.version || 'N/A'
+}
+
+const getChecksumSha256 = (template) => {
+  // Prefer checksumSha256, fallback to checksum
+  return template.checksumSha256 || template.checksum || null
+}
+
+const getUpdatedAt = (template) => {
+  return template.updatedAt || null
+}
+
+// 安装模板
+const handleInstall = async (tpl) => {
+  const templateCode = getTemplateCode(tpl)
+  installingMap.value[templateCode] = true
+  installErrorMap.value[templateCode] = null
+  
+  try {
+    await installTemplate({
+      templateCode: templateCode,
+      versionSemver: getVersionSemver(tpl),
+      downloadUrl: tpl.downloadUrl,
+      checksumSha256: getChecksumSha256(tpl)
+    })
+    installedMap.value[templateCode] = true
+    showToast('模板安装成功', 'success')
+  } catch (e) {
+    const errorMsg = e?.response?.data?.message || e?.message || '安装失败'
+    installErrorMap.value[templateCode] = errorMsg
+    showToast(`模板安装失败: ${errorMsg}`, 'error')
+  } finally {
+    installingMap.value[templateCode] = false
+  }
+}
+
+// 加载已安装的模板列表
+const loadInstalledTemplates = async () => {
+  try {
+    const res = await listInstalledTemplates()
+    if (res.success && res.data && res.data.items) {
+      // 将已安装的模板映射到 installedMap
+      res.data.items.forEach(item => {
+        const code = item.templateId || item.templateCode
+        if (code) {
+          installedMap.value[code] = true
+        }
+      })
+    }
+  } catch (e) {
+    // 静默失败，不影响页面
+    console.warn('Failed to load installed templates:', e)
+  }
+}
+
+// Fetch Templates 操作
+const handleFetchTemplates = async () => {
+  if (!selectedActivityId.value) {
+    showToast('Please select an activity first', 'warning')
+    return
+  }
+
+  fetchingTemplates.value = true
+  templatesList.value = null
+  templatesStale.value = false
+  templatesCachedAt.value = null
+  
+  try {
+    const res = await getActivityTemplates(selectedActivityId.value)
+    
+    if (res.success && res.data) {
+      templatesList.value = res.data.items || []
+      templatesStale.value = res.data.stale === true
+      templatesCachedAt.value = res.data.cachedAt || null
+      
+      if (templatesStale.value) {
+        showToast('Using cached data', 'info')
+      } else {
+        showToast('Templates fetched successfully', 'success')
+      }
+    } else {
+      const errorMsg = res.message || 'Failed to fetch templates'
+      showToast(errorMsg, 'error')
+    }
+  } catch (err) {
+    // Handle HTTP status codes
+    const statusCode = err?.response?.status
+    const errorData = err?.response?.data
+    
+    if (statusCode === 401) {
+      showToast('Token invalid/expired, please handshake first', 'error')
+    } else if (statusCode === 503) {
+      showToast('Platform unreachable and no cache', 'error')
+    } else {
+      const errorMsg = errorData?.message || 
+                       err?.message || 
+                       'Failed to fetch templates'
+      showToast(errorMsg, 'error')
+    }
+    console.error('Fetch templates failed:', err)
+  } finally {
+    fetchingTemplates.value = false
+  }
+}
+
 // 监听 activeTab，切换到对应 tab 时自动加载
 watch(activeTab, (newTab) => {
   if (newTab === 'camera' && !cameraConfig.value) {
@@ -1177,6 +1384,9 @@ onMounted(() => {
   window.addEventListener('keydown', handleUserActivity)
   window.addEventListener('touchstart', handleUserActivity)
   window.addEventListener('click', handleUserActivity)
+  
+  // 加载已安装的模板列表
+  loadInstalledTemplates()
   
   // 如果当前是 camera tab，加载数据
   if (activeTab.value === 'camera') {
@@ -2189,5 +2399,174 @@ const handleExit = () => {
   white-space: pre-wrap;
   word-break: break-all;
   overflow-x: auto;
+}
+
+.activity-item {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.activity-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.activity-item-selected {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.activity-item-selected:hover {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.6);
+}
+
+.btn-fetch-templates {
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.btn-fetch-templates:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-fetch-templates:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: rgba(102, 126, 234, 0.3);
+}
+
+.device-templates-section {
+  margin-top: 32px;
+}
+
+.device-templates-section h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.templates-list {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.templates-empty {
+  padding: 24px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+}
+
+.templates-items {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.template-item {
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+.template-field {
+  display: flex;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.template-field:last-child {
+  margin-bottom: 0;
+}
+
+.template-label {
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+  min-width: 120px;
+  margin-right: 8px;
+}
+
+.template-value {
+  color: rgba(255, 255, 255, 0.9);
+  font-family: 'Courier New', monospace;
+  word-break: break-all;
+}
+
+/* 模板安装区域 */
+.template-install-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn-install-template {
+  padding: 8px 16px;
+  background: #2d6cff;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  align-self: flex-start;
+}
+
+.btn-install-template:hover:not(:disabled) {
+  background: #1e5ae6;
+}
+
+.btn-install-template:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.template-install-status {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  align-self: flex-start;
+}
+
+.template-install-status.installed {
+  background: rgba(68, 170, 68, 0.2);
+  border: 1px solid rgba(68, 170, 68, 0.4);
+  color: #44aa44;
+}
+
+.template-install-status.installing {
+  background: rgba(255, 170, 0, 0.2);
+  border: 1px solid rgba(255, 170, 0, 0.4);
+  color: #ffaa00;
+}
+
+.template-install-status .status-text {
+  display: inline-block;
+}
+
+.template-install-error {
+  color: #ff4444;
+  font-size: 12px;
+  padding: 4px 8px;
+  background: rgba(255, 68, 68, 0.1);
+  border: 1px solid rgba(255, 68, 68, 0.3);
+  border-radius: 4px;
 }
 </style>

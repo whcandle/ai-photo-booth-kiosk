@@ -143,3 +143,19 @@ export async function restartPreview() {
   );
   return res.data;
 }
+
+/**
+ * 安装模板
+ */
+export async function installTemplate(payload) {
+  const res = await api.post("/local/device/templates/install", payload);
+  return res.data;
+}
+
+/**
+ * 获取已安装的模板列表
+ */
+export async function listInstalledTemplates() {
+  const res = await api.get("/local/device/templates/installed");
+  return res.data;
+}
