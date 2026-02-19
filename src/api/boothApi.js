@@ -32,7 +32,7 @@ export async function getSession(sessionId) {
 
 export async function listTemplates() {
   const res = await api.get("/api/v1/templates");
-  return res.data.items;
+  return res.data; // 返回原始响应，让组件处理结构兼容
 }
 
 export async function selectTemplate(sessionId, templateId) {
