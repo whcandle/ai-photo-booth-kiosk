@@ -3,10 +3,11 @@
   <div class="countdown-screen">
     <!-- 背景预览图（失败则不渲染） -->
     <img
-      v-if="previewUrl && !previewFailed"
+      v-if="!previewFailed"
       class="preview-bg"
-      :src="previewUrlWithCache"
+      :src="imgSrc"
       alt="camera preview"
+      @load="onImageLoad"
       @error="handlePreviewError"
     />
     <!-- 半透明遮罩（无预览时相当于深色背景） -->
@@ -39,34 +40,45 @@ let captureTriggered = false;
 
 // 预览相关（失败不影响倒计时）
 const previewFailed = ref(false);
-const cacheTimestamp = ref(Date.now());
-let previewTimer = null; // 预览刷新 timer
+const imgSrc = ref(""); // 实际绑定给 <img> 的 src
+let frameTimer = null; // 预览刷新 timer
 
-const previewUrl = computed(() => {
-  return props.session?.cameraPreviewUrl || "http://127.0.0.1:18080/preview";
+// 轮询频率：600ms（从 400ms 降低，更稳定）
+const FRAME_INTERVAL_MS = 600;
+
+// ✅ 单帧 URL（走 mvp 代理，不再使用 MJPEG /preview）
+const frameBaseUrl = computed(() => {
+  const base = import.meta.env.VITE_BOOTH_API_BASE || "http://localhost:8080";
+  return `${base}/local/camera/preview.jpg`;
 });
 
-// 防缓存：在 URL 后追加 ?t=cacheTimestamp
-const previewUrlWithCache = computed(() => {
-  return `${previewUrl.value}?t=${cacheTimestamp.value}`;
-});
-
-function handlePreviewError() {
-  previewFailed.value = true;
-  if (previewTimer) {
-    clearInterval(previewTimer);
-    previewTimer = null;
-  }
+// 拉一帧：用 ?t= 避免浏览器缓存
+function refreshFrame() {
+  imgSrc.value = `${frameBaseUrl.value}?t=${Date.now()}`;
 }
 
 function startPreviewRefresh() {
-  if (previewTimer) clearInterval(previewTimer);
+  stopPreviewRefresh();
   previewFailed.value = false;
+  refreshFrame(); // 先来一帧
+  frameTimer = setInterval(refreshFrame, FRAME_INTERVAL_MS);
+}
 
-  // 400ms 刷新一次时间戳，驱动 <img> 刷新画面
-  previewTimer = setInterval(() => {
-    cacheTimestamp.value = Date.now();
-  }, 400);
+function stopPreviewRefresh() {
+  if (frameTimer) {
+    clearInterval(frameTimer);
+    frameTimer = null;
+  }
+}
+
+function onImageLoad() {
+  previewFailed.value = false;
+}
+
+function handlePreviewError() {
+  // 单帧模式偶发失败很正常：网络抖动/相机忙
+  // 不要立刻停止，继续尝试
+  previewFailed.value = true;
 }
 
 async function triggerCaptureOnce() {
@@ -127,8 +139,17 @@ watch(
 
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
-  if (previewTimer) clearInterval(previewTimer);
+  stopPreviewRefresh();
 });
+
+// 如果 session 变化（比如切换到 COUNTDOWN 新会话），也重置一下
+watch(
+  () => props.session?.sessionId,
+  () => {
+    previewFailed.value = false;
+    refreshFrame();
+  }
+);
 
 async function reset() {
   try {
